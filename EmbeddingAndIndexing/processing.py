@@ -3,7 +3,7 @@ import tensorflow as tf # type: ignore
 import os
 import numpy as np
 import faiss
-import EmbeddingAndIndexing.constants as constants
+import constants as constants
 from transformers import BertTokenizer, TFBertModel
 
 
@@ -12,13 +12,42 @@ def process_text(text, label):
     # Preprocess texts by converting in to Tokens, and their paddings
     # We are considering bert opensoure model as the base for tokenization
     tokenizer = BertTokenizer.from_pretrained(constants.base_bert_model)
-    encoded_input = tokenizer(text, padding=True, truncation=True, return_tensors='tf')
+    chunks = []
+    current_chunk = []
+    current_length = 0
+    for sentence in text.split('.'):
+        current_length += len(tokenizer.tokenize(sentence.strip()))
+        # Let us use buffer_for_token_size_threshold in later stages
+        if current_length >= constants.max_token_length:
+            chunks.append(' '.join(current_chunk))
+            current_chunk = []
+            current_length = 0
+        current_chunk.append(sentence.strip())
+    if len(current_chunk) != 0:
+        chunks.append(' '.join(current_chunk))
     
+    input_ids = []
+    attention_masks = []
+    for chunk in chunks:
+        tokens = tokenizer.encode_plus(chunk, add_special_tokens=True, max_length=constants.max_token_length, padding='max_length', truncation=True, return_tensors='tf')
+        input_ids.append(tokens['input_ids'])
+        attention_masks.append(tokens['attention_mask'])
+    input_ids = tf.concat(input_ids, axis=0)
+    attention_masks = tf.concat(attention_masks, axis=0)
+    
+    
+    # print(input_ids, attention_masks)
+    # input_ids = encoded_input['input_ids']
+    # attention_mask = encoded_input['attention_mask']
     # Fine-tune or update model with new insight
-    model = fine_tune_model(encoded_input,label)
+    # model = fine_tune_model(encoded_input,label)
     
+    encoded_input = {}
+    encoded_input['input_ids'] = input_ids
+    encoded_input['attention_mask']= attention_masks   
     # Generate embeddings
-    embeddings = get_cls_embeddings(encoded_input, model)
+    
+    embeddings = get_cls_embeddings(encoded_input, None)
     
     # Index embeddings in FAISS
     index_embeddings_in_faiss(embeddings)
@@ -47,8 +76,8 @@ def fine_tune_model(encoded_input, label):
 
 
 def get_cls_embeddings(encoded_input, model):
-    # TFBertForSequenceClassification [Param: Model] currently doesnt support hidden states loading, as of now, we can load it from path and optimize it in future
-    fine_tuned_model = TFBertModel.from_pretrained(constants.trained_model_location)
+
+    fine_tuned_model = TFBertModel.from_pretrained(constants.base_bert_model)
     output = fine_tuned_model(encoded_input)
     embeddings = output.last_hidden_state  
 
